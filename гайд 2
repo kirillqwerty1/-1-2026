@@ -1,140 +1,319 @@
-На Коммутаторе 1
+===ISP===
 
-mkdir -p /etc/net/ifaces/{enp7s{1,2},vlan{100,200,999},gre1}
-echo 'TYPE=eth' | tee /etc/net/ifaces/enp7s{1,2}/options
-vim /etc/net/ifaces/enp7s1/    ipv4address > 172.16.1.2/28   ipv4route >  default via 172.16.1.1   resolf.conf > nameserver 77.88.8.8 (если дел dns то 192.168.100.2)
-echo $'100\n200\n999' | xargs -1 bash -c 'echo -e "TYPE=vlan\nHOST=ebp7s2\nVID={}" > etc/net/ifaces/vlan{}/options'
-vim /etc/net/ifaces/vlan100/ipv4address > 192.168.100.1/27   vlan200/ >  192.168.200.1/28  vlan999/  >  192.168.99.1/29
-vim /etc/net/sysctl.conf    >   net.ipv4.ip_forward = 1
-cat <<EOF > /etc/net/ifaces/gre1/options
-TYPE=iptun
-TUNTYPE=gre
-TUNLOCAL=172.16.1.2
-TUNREMOTE=172.16.2.2
-TUNTTL=64
-TUNOPTIONS='ttl 64'
-EOF
+--Chrony-- (в рамках задания 4)
 
-echo "10.10.10.1/30" > /etc/net/ifaces/gre1/ipv4address
+control chrony server
 
-apt-get install frr sudo  tzdata dnsmasq nftables -y
+sed -i 's/pool poll.ntp.org iburst/pool poll.ntp.org iburst prefer minstratum 4/' /etc/chrony.conf | grep pool /etc/chrony.conf
+sed -i 's/\#local stratum  10/local stratum 5/' /etc/chrony.conf | grep "local stratum" /etc/chrony.conf
+systemctl restart chronyd
 
-vim /etc/nftables/nftables.nft   и на коммутаторе 2 тож сделать
-#!usr/sbin/nft -f
-flush ruleset
-table ip nat {
- chain postrouting {
- type nat hook postrouting priority srenat
- oifname “enp7s1” masquerade
- }
+
+--NGINX-- (в рамках задания 9)
+
+apt-get install nginx -y
+
+nano /etc/nginx/sites-available.d/r-proxy.conf
+---
+server {
+	listen 80;
+	server_name web.au-team.irpo;
+
+	location / {
+		proxy_pass http://172.16.1.10:8080;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real_IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+
+		auth_basic "Restricted Access";
+		auth_basic_user_file /etc/nginx/.htpasswd;
+	}
 }
 
-systemctl enable --now nftables
+server {
+	listen 80;
+	server_name docker.au-team.irpo;
+
+	location / {
+		proxy_pass http://172.16.2.10:8080;
+		proxy_set_header Host $host;
+		proxy_set_header X-Real_IP $remote_addr;
+		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+		proxy_set_header X-Forwarded-Proto $scheme;
+	}
+}
+---
+
+ln -s /etc/nginx/sites-available.d/r-proxy.conf /etc/nginx/sites-enabled.d/
+
+nginx -t
+systemctl enable --now nginx
+systemctl status nginx
+
+--HTTP Basic Auth-- (в рамках задания 10)
+
+apt-get install apache2-htpasswd -y
+htpasswd -c /etc/nginx/.htpasswd WEB
+cat /etc/nginx/.htpasswd
+
+nginx -t
+systemctl restart nginx
 
 
-уст net_admin
+===HQ-RTR===
 
-useradd <имя пользователя> или useradd -u <id> <имя пользователя> с нужным id
-echo "<имя пользователя>:P@ssw0rd" | chpasswd
-usermod -aG wheel <имя пользователя>
-echo "WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/<имя пользователя>
-su -l <имя пользователя>
-sudo id
-(и не забыть выйти после)
+--Трансляция портов-- (в рамках задания 8)
 
-sed -l 's/ospfd=no/ospfd=yes/' /etc/frr/daemons ; grep ospf /etc/frr/deamons
+nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
+nft add rule nat prerouting iif "enp7s1" tcp dport 2026 dnat to 192.168.1.10
+nft add rule nat prerouting iif "enp7s1" tcp dport 8080 dnat to 192.168.1.10:80
 
-cat <<EOF > /etc/frr/frr.conf
-interface gre1
- ip ospf area 0
- ip ospf authentication
- ip ospf authentication-key P@ssw0rd
- no ip ospf passive
-exit
-!
-Interface vlan100
- ip ospf area 0
-exit
-!
-Interface vlan200
- ip ospf area 0
-exit
-!
-Interface vlan999
- ip ospf area 0
-exit
-!
-router ospf
- passive-interface default
-exit
+nft list ruleset
+nft list ruleset > /etc/nftables/nftables.nft
+systemctl restart nftables
+nft list ruleset
+
+
+===BR-RTR===
+
+--Трансляция портов-- (в рамках задания 8)
+
+nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
+nft add rule nat prerouting iif "enp7s1" tcp dport { 8080, 2026 } dnat to 192.168.3.10
+
+nft list ruleset
+nft list ruleset > /etc/nftables/nftables.nft
+systemctl restart nftables
+nft list ruleset
+
+
+--Chrony-- (в рамках задания 4)
+
+sed -i 's/pool pool.ntp.org iburst/server 172.16.1.1 iburst/' /etc/chrony.conf && systemctl restart chronyd && chronyc sources
+
+
+===BR-SRV===
+
+==Domain== (в рамках задания 1)
+--SambaDC--
+
+echo "nameserver 192.168.1.10" >> /etc/net/ifaces/enp7s1/resolv.conf; systemctl restart network; cat /etc/resolv.conf
+
+ping ya.ru -c 2
+
+apt-get install -y task-samba-dc
+rm -f /etc/samba/smb.conf
+rm -rf {/var/lib/samba, /var/cache/samba}
+mkdir -p /var/lib/samba/sysvol
+
+samba-tool domain provision
+
+mv /etc/krb5.conf /etc/krb5.conf.back
+cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+
+systemctl enable --now samba
+systemctl status samba
+
+--DNS--
+
+samba-tool dns add br-srv.au-team.irpo hq-srv A 192.168.1.10 -U Administrator
+samba-tool dns add br-srv.au-team.irpo hq-rtr A 192.168.1.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo br-rtr A 192.168.3.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo web.au-team.irpo A 172.16.1.1 -U Administrator
+samba-tool dns add br-srv.au-team.irpo docker.au-team.irpo A 172.16.2.1 -U Administrator
+
+samba-tool dns query br-srv.au-team.irpo au-team.irpo @ ALL -U administrator
+
+sed -i 's/nameserver 192.168.1.10/nameserver 127.0.0.1/' /etc/net/ifaces/enp7s1/resolv.conf; systemctl restart network; cat /etc/resolv.conf
+
+--Users--
+samba-tool group add hq
+
+for i in {1..5}; do samba-tool user add hquser$i P@ssw0rd; done
+for i in {1..5}; do samba-tool user setexpiry hquser$i --noexpiry; done (как написано в видосе, может понадобится, но это не точно, использовать в случае не срабатывания нижней и после снова нижнюю)
+for i in {1..5}; do samba-tool group addmembers hq hquser$i; done
+
+samba-tool group listmembers hq
+
+на HQ-RTR меняем параметры DNS на dnsmasq
+
+sed -i 's/192.161.10/192.168.3.10/' /etc/dnsmasq.conf; systemctl restart dnsmasq
+cat /etc/dnsmasq.conf
+
+На HQ-CLI перезагружаем сеть, проверяем DNS
+вводим в домен
+
+control libnss-role   (эта хрень не срабатывает)
+roleadd hq wheel
+
+echo "WHEEL:USERS ALL=(ALL:ALL) /usr/bin/cat, /usr/bin/grep, /usr/bin/ud" >> /etc/sudoers
+tail /etc/sudoers
+
+--Ansible-- (в рамках задания 5)
+
+apt-get install ansible sshpass -y
+nano /etc/ansible/ansible.cfg
+
+необходимо раскомментировать строку:
+host_key_checking = False
+
+после первой строчки под [defaults] добавить:
+interpreter_python=auto_silent
+
+cat << EOF > /etc/ansible/hosts
+HQ-SRV ansible_host=192.168.1.10 ansible_user=user ansible_password=resu ansible_port=2026
+HQ-RTR ansible_host=192.168.1.1 ansible_user=net_admin ansible_password=P@ssw0rd
+BR-RTR ansible_host=192.168.3.1 ansible_user=net_admin ansible_password=P@ssw0rd
+HQ-CLI ansible_host=192.168.2.10 ansible_user=user ansible_password=resu
 EOF
-systemctl enable --now frr
-sed -i 's/AUTO_LOCAL_RESOLVER=yes/AUTO_LOCAL_RESOLVER=no/' /etc/sysconfig/dnsmasq ; grep AUTO_LOCAL_RESOLVER /etc/sysconfig/dnsmasq
-vim /etc/dnsmasq.conf
-port=0
-interface=vlan200
-listen-address=192.168.200.1(айпи адрес vlan200)
-dhcp-authoritative
-dhcp-range=interface:vlan200, 192.168.200.2, 192.168.200.2, 255.255.255.240, 12h
-dhcp-option=3, 192.168.200.1
-dhcp-option=6, 192.168.100.2
-leasefile-ro
+
+проверить состояние и при необходимости запустить службы SSH на хостах
+systemctl start sshd
+
+ansible all -m ping
+
+--Docker-- (в рамках задания 6)
+
+apt-get install docker-engine docker-compose-v2 -y
+systemctl enable --now docker.service
+mount -o loop /dev/sr0 /mnt/ -v
+ls -l /mnt/docker/readme.txt
+
+docker load < /mnt/docker/site_latest.tar
+docker load < /mnt/docker/mariadb_latest.tar
+docker image ls
+
+cat << EOF > docker-compose.yml
+services:
+  database:
+    container_name: db
+    image: mariadb:latest
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MARIADB_DATABASE: testdb
+      MARIADB_USER: test
+      MARIADB_PASSWORD: P@ssw0rd
+      MARIADB_ROOT_PASSWORD: P@ssw0rd
+    volumes:
+      - db_data:/var/lib/MySQL
+
+  app:
+    container_name: testapp
+    image: site:latest
+    restart: always
+    ports:
+      - "8080:8000"
+    environment:
+      DB_HOST: database
+      DB_PORT: 3306
+      DB_NAME: testdb
+      DB_USER: test
+      DB_PASS: P@ssw0rd
+      DB_TYPE: maria
+    depends_on:
+      - database
+volumes:
+  db_data:
 EOF
 
-systemctl enable --now frr dnsmasq
+docker compose config
+docker compose up -d
+docker ps
+ss -ltnp4 | grep 8080
 
-systemctl restart network
+переходим на HQ-CLI, заходим по http://docker.au-team.irpo (если сделан nxinx) и по http://192.168.3.10:8080 создаём запись
 
-дл отч
-cat /etc/resolv.conf
-ip r | grep ospf(динамическая маршрутизация)
-ss –lun | grep 67(динамическая конфигурация хостов)
+нижние так-то нужно ввести, но лучше не рисковать, следующая удаляет контейнер, и ломается, слишком долго запускается
+#docker rm -f $(docker ps -qa)
+#docker compose
+#проверяем что запись на месте (долго очухивается, и пускает на страницу через некоторое время)
 
+===HQ-SRV===
 
-На Коммутаторе 2
+--Chrony-- (в рамках задания 4)
+sed -i 's/pool pool.ntp.org iburst/server 172.16.1.1 iburst/' /etc/chrony.conf && systemctl restart chronyd && chronyc sources
 
-mkdir -p /etc/net/ifaces/{enp7s{1,2},/grel1}
+--RAID-- (в рамках задания 2)
+lsblk
+parted /dev/sdb
+---
+mklabel msdos
+mkpart primary 1MiB 100%
+set 1 raid on
+print
+select /dev/sdc
+---
 
-echo 'TUPE=eth'  | tee /etc/net/ifaces/{enp7s{1,2}/options
+посмотреть какие есть диски можно командой lsblk, и указать нужные в /dev/sdb1 и /dev/sdc1
+mdadm --create /dev/md0 --level=0 --raid-devices=2 /dev/sdb1 /dev/sdc1
+mdadm --detail --scan >> /etc/mdadm.conf
+mkfs.ext4 /dev/md0
+mkdir /raid
+cp /etc/fstab /etc/fstab.back
+echo "/dev/md0 /raid ext4 defaults 0 0  " >> /etc/fstab
+mount -av
+df -T
 
-vim /etc/net/ifaces/enp7s1/    ipv4address > 172.16.2.2/28   ipv4route >  default via 172.16.2.1   resolf.conf > nameserver 77.88.8.8 (если дел dns то 192.168.100.2)
-vim /etc/net/ifaces/enp7s2/ipv4address > 192.168.1.1/28
-vim /etc/net/sysctl.conf  > net.ipv4.ip_forward = 1
+--NFS-- (в рамках задания 3)
 
-cat <<EOF > /etc/net/ifaces/gre1/options
-TYPE=iptun
-TUNTYPE=gre
-TUNLOCAL=172.16.2.2
-TUNREMOTE=172.16.1.2
-TUNTTL=64
-TUNOPTIONS='ttl 64'
-EOF
+apt-get install nfs-server nfs-utils -y
 
-echo "10.10.10.2/30" > /etc/net/ifaces/gre1/ipv4address
+(если не делали raid, то перед следующей прописать: mkdir /raid)
+mkdir /raid/nfs
+cp /etc/exports /etc/exports.back
+echo "/raid/nfs 192.168.2.0/27(rw,no_subtree_check,no_root_squash)" >> /etc/exports
+systemctl enable --now nfs-server
+exportfs -vra (необходима в случае повторного редактирования /etc/exports)
 
-apt-get install frr sudo trdata nftables -y
+-- На HQ-CLI --
+mkdir /mnt/nfs
+chmod -R 777 /mnt/nfs
+showmount -e hq-srv
+cp /etc/fstab /etc/fstab.back
+echo "192.168.1.10:/raid/nfs /mnt/nfs nfs rw,soft,_netdev 0 0   " >> /etc/fstab
+mount -av
+df -T
 
+создать файл/каталог в /mnt/nfs на клиенте через графику/командную панель, посмотреть на второй стороне в каталоге командой ls -l /raid/nfs/ и ls /raid/nfs/
 
-уст net_admin
+--WEB App-- (в рамках задания 7)
+ПЕРЕПРОВЕРИТЬ, ибо при заходе по домену, просит логин-пароль и они не подходят
 
+mount -o loop /dev/sr0 /mnt/ -v
+apt-get install lamp-server -y
+cp /mnt/web/index.php /var/www/html
+cp /mnt/web/logo.png /var/www/html
 
-sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons ; grep ospf /etc/frr/deamons
+systemctl enable --now mariadb
 
-cat <<EOF > /etc/frr/frr/conf
-interface gre1
-  ip ospf area 0
-  ip ospf authentication
-  ip ospf authentication-key P@ssw0rd
-  no ip ospf passive
-exit
-!
-Interface enp7s2
- ip ospf area 0
-exit
-!
-router ospf
- passive-interface default
-exit
-EOF
-systemctl enable --now frr
-и рестарт нетворк
+mariadb -e "CREATE DATABASE webdb;"
+mariadb -e"
+CREATE USER 'web'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+GRANT ALL PRIVILEGES ON webdb.* TO 'web'@'localhost';
+"
+
+mariadb webdb < /mnt/web/dump.sql
+mariadb -e "USE webdb; SHOW TABLES;"
+
+nano /var/www/html/index.php
+--- (заменить параметры на указанные)
+$servername = "localhost";
+$username = "web";
+$password = "P@ssw0rd";
+$dbname = "webdb";
+---
+
+systemctl enable --now httpd2.service
+
+переходим на HQ-CLI в браузере
+
+web.au-team.irpo и/или 192.168.1.10, аутентификация WEB/P@ssw0rd (по домену просит данные, по ip нет, вход по домену доступен при настроенном nginx или samba)
+
+===HQ-CLI=== (в рамках задания 11)
+apt-get install yandex-browser-stable -y
+
+--Chrony-- (в рамках задания 4)
+echo "server 172.16.1.1 iburst" >> /etc/chrony.conf && systemctl restart chronyd
