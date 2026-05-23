@@ -1,84 +1,211 @@
-Серв 1 Серв 2 настройка  без днс
+== 4 задание
+на исп
+--Chrony-- 
+control chrony server
+sed -i 's/pool poll.ntp.org iburst/pool poll.ntp.org iburst prefer minstratum 4/' /etc/chrony.conf | grep pool /etc/chrony
+sed -i 's/\#local stratum  10/local stratum 5/' /etc/chrony.conf | grep "local stratum" /etc/chrony.conf
+systemctl restart chronyd
 
-mkdir /etc/net/ifaces/vlan100
+бр ртр
+sed -i 's/pool pool.ntp.org iburst/server 172.16.1.1 iburst/' /etc/chrony.conf && systemctl restart chronyd && chronyc sources
 
-vim /etc/net/ifaces/vlan100/options
-TYPE=vlan
-HOST=enp7s1
-VID=100
+хк срв
+sed -i 's/pool pool.ntp.org iburst/server 172.16.1.1 iburst/' /etc/chrony.conf && systemctl restart chronyd && chronyc sources
 
-echo 'TYPE=eth' > /etc/net/ifaces/enp7s1/options
+хк кли
+echo "server 172.16.1.1 iburst" >> /etc/chrony.conf && systemctl restart chronyd
 
-vim /etc/net/ifaces/enp7s1/options > TYPE=eth
-vim /etc/net/ifaces/vlan100/   ipv4address > 192.168.100.2/27   ipv4route  >  default via 192.168.100.1  resolv.conf > nnameserver 77.88.8.8 
-systemctl restart network
+бр срв
+варианты выше попробовать
 
-настройка sshuser
+== 8 задание
+хк ртр
 
-useradd <имя пользователя> или useradd -u <id> <имя пользователя> с нужным id
-echo "<имя пользователя>:P@ssw0rd" | chpasswd
-usermod -aG wheel <имя пользователя>
-echo "WHEEL_USERS ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/<имя пользователя>
-su -l <имя пользователя>
-sudo id
-(и не забыть выйти после)
+--Трансляция портов-- 
 
-vim /etc/openssh/banner  >  Authorized access only
-vim /etc/openssh/sshd_config >  \/
-Port = 2026
-MaxAuthTries = 2
-AllowUsers sshuser
-Banner /etc/openssh/banner
+nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
+nft add rule prerouting iif "enp7s1" tcp dport 2026 dnat to 192.168.1.10
+nft add rule prerouting iif "enp7s1" tcp dport 8080 dnat to 192.168.1.10:80
 
-выход и перезапуск
+nft list ruleset
+nft list ruleset > /etc/nftables/nftables.nft
+systemctl restart nftables
+nft list ruleset
 
-systemctl restart sshd
+бр ртр
 
-...
+nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
+nft add rule prerouting iif "enp7s1" tcp dport { 8080, 2026 } dnat to 192.168.3.10
 
-2 сервер
+nft list ruleset
+nft list ruleset > /etc/nftables/nftables.nft
+systemctl restart nftables
+nft list ruleset
 
-hostnamectl set-hostname hq-srv.au-team.irpo; exec bash
-timedatectl set-timezone Europe/Moscow
-vim /etc/net/ifaces/enp7s1/ipv4address  >  192.168.1.2/28
-vim /etc/net/ifaces/enp7s1/ipv4route  >  default via 192.168.1.1
-vim /etc/net/ifaces/enp7s1/options  > \/
-TYPE=eth
-ONBOOT=yes
+== 10 задание
+на исп (см тредование)
+apt-get install apache2-htpasswd -y
+htpasswd -c /etc/nginx/.htpasswd WEB
+cat /etc/nginx/.htpasswd
 
-vim /etc/net/ifaces/enp7s1/resolv.conf  > \/
-search au-team.irpo
-nameserver 192.168.100.2
-создаем sshuser
+nginx -t
+systemctl restart nginx
 
-vim /etc/openssh/banner  >  Authorized access only
+== 5 задание
+бр срв
 
-Меняем значения в конфиге /etc/openssh/sshd  > \/
-Port 2026
-AllowUsers sshuser
-Banner /etc/openssh/banner
-systemctl restart sshd
+apt-get install ansible sshpass -y
+nano /etc/ansible/ansible.cfg
 
+необходимо раскомментировать строку:
+host_key_checking = False
 
-Cli
+после первой строчки под [defaults] добавить:
+interpreter_python=auto_silent
 
-время и хостнейм
+cat << EOF > /etc/ansible/hosts
+HQ-SRV ansible_user=user ansible_password=resu ansible_port=2026
+HQ-RTR ansible_user=net_admin ansible_password=P@ssw0rd
+BR-RTR ansible_user=net_admin ansible_password=P@ssw0rd
+HQ-CLI ansible_user=user ansible_password=resu
+EOF
 
-mkdir –p /etc/net/ifaces/vlan200
-vim /etc/net/ifaces/vlan200/ipv4address  >  192.168.200.2/28
-vim /etc/net/ifaces/vlan200/ipv4route   >  default via 192.168.200.1
-vim /etc/net/ifaces/vlan200/options
+проверить состояние службы SSH на хостах
 
-Вводим:
-TYPE=vlan
-HOST=enp7s1
-VID=200
+ansible all -m ping
 
-vim /etc/net/ifaces/vlan200/resolv.conf
+== 6 задание
+на вр срв
 
-Вводим:
-search au-team.irpo
-nameserver 192.168.100.2
+--Docker-- 
 
-systemctl restart network
-ip -dr -c a
+apt-get install docker-engine docker-compose-v2 -y
+systemctl enable --now docker.service
+mount -o loop /dev/sr0 /mnt/ -v
+ls -l /mnt/docker/readme.txt
+
+docker load < /mnt/docker/site_latest.tar
+docker load < /mnt/docker/mariadb_latest.tar
+docker image ls
+
+cat << EOF > docker-compose.yml
+services:
+  datanase:
+    container_name: db
+    image: mariadb:latest
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MARIADB_DATABASE: testdb
+      MARIADB_USER: test
+      MARIADB_PASSWORD: P@ssw0rd
+      MARIADB_ROOT_PASSWORD: P@ssw0rd
+    volumes:
+      - db_data:/var/lib/MySQL
+
+  app:
+    container_name: testapp
+    image: site:latest
+    restart: always
+    ports:
+      - "8080:8000"
+    environment:
+      DB_HOST: database
+      DB_PORT: 3306
+      DB_NAME: testdb
+      DB_USER: test
+      DB_PASS: P@ssw0rd
+      DB_TYPE: maria
+    depends_on:
+      - database
+volumes:
+  db_data:
+EOF
+
+docker compose config
+docker compose up -d
+docker ps
+ss -ltnp4 | grep 8080
+
+переходим на HQ-CLU, заходим по docker.au-team.irpo (если сделан nxinx) и по 192.168.3.10:8080 создаём запись
+docker rm -f $ (docker ps -qa)
+docker compose up -d
+
+== 2 задание 
+хк срв
+
+lsblk
+parted /dev/sdb
+---
+mklabel msdos
+mkpart primary 1MiB 100%
+set 1 raid on
+print
+select /dev/sdc
+---
+
+mdadm --create /dev/md0 --level=0 --raid-devices=2 /dev/sdb1 /dev/sdc1
+mdadm --detail --scan >> /etc/mdadm.conf
+mkfs.ext4 /dev/md0
+mkdir /raid
+cp /etc/fstab /etc/fstab.back
+echo "/dev/md0 /raid ext4 defaults 0 0  " >> /etc/fstab
+mount -av
+df -T
+
+== 3 задание (отчет)
+хк срв
+
+apt-get install nfs-server nfs-utils -y
+mkdir /raid/nfs
+cp /etc/exports /etc/exports.back
+echo "/raid/nfs 192.168.2.0/27 (rw, no_subtree_check,no_root_squash)" >> /etc/exports
+systemctl enable --now nfs-server
+exportfs -vra
+
+хк сли
+
+mkdir /mnt/nfs
+chmod -R 777 /mnt/nfs
+showmount -e hq-srv
+cp /etc/fstab /etc/fstab.back
+echo "192.168.1.10:/raid/nfs /mnt/nfs nfs rw.soft,_netdev 0 0  " >> /etc/fstab
+mount -av
+df -T
+
+== 7 задание (отчет)
+
+хк срв
+
+mount -o loop /dev/sr0 /mnt/ -v
+apt-get install lamp-server -y
+cp /mnt/web/index.php /var/www/html
+cp /mnt/web/logo.png /var/www/html
+
+systemctl enable --now mariadb
+
+mariadb -e "CREATE DATABASE webdb;"
+mariadb -e"
+CREATE USER 'web'@'localhost' IDENTIFIED BY 'P@ssw0rd';
+GRANT ALL PRIVILEGES ON webdb.* TO 'web'@'localhost';
+"
+mariadb webdb < /mnt/web/dump.sql
+mariadb -e "USE webdb; SHOW TABLES;"
+
+nano /var/www/html/index.php
+---
+$servername = "localhost";
+$username = "web";
+$password = "P@ssw0rd";
+$dbname = "webdb";
+---
+systemctl enable --now httpd2.service
+
+переходим на HQ-CLI в браузере
+web.au-team.irpo и/или 192.168.1.10, аутентификация WEB/P@ssw0rd
+
+== 11 задание (отчет)
+на хк сли
+
+apt-get install yandex-browser-stable -y
