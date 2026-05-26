@@ -2,7 +2,7 @@
 на исп
 --Chrony-- 
 control chrony server
-sed -i 's/pool poll.ntp.org iburst/pool poll.ntp.org iburst prefer minstratum 4/' /etc/chrony.conf | grep pool /etc/chrony
+sed -i 's/pool poll.ntp.org iburst/pool poll.ntp.org iburst prefer minstratum 4/' /etc/chrony.conf | grep pool /etc/chrony.conf
 sed -i 's/\#local stratum  10/local stratum 5/' /etc/chrony.conf | grep "local stratum" /etc/chrony.conf
 systemctl restart chronyd
 
@@ -24,8 +24,8 @@ echo "server 172.16.1.1 iburst" >> /etc/chrony.conf && systemctl restart chronyd
 --Трансляция портов-- 
 
 nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
-nft add rule prerouting iif "enp7s1" tcp dport 2026 dnat to 192.168.1.10
-nft add rule prerouting iif "enp7s1" tcp dport 8080 dnat to 192.168.1.10:80
+nft add rule nat prerouting iif "enp7s1" tcp dport 2026 dnat to 192.168.1.10
+nft add rule nat prerouting iif "enp7s1" tcp dport 8080 dnat to 192.168.1.10:80
 
 nft list ruleset
 nft list ruleset > /etc/nftables/nftables.nft
@@ -35,7 +35,7 @@ nft list ruleset
 бр ртр
 
 nft add chain nat prerouting { type nat hook prerouting priority dstnat \; }
-nft add rule prerouting iif "enp7s1" tcp dport { 8080, 2026 } dnat to 192.168.3.10
+nft add rule nat prerouting iif "enp7s1" tcp dport { 8080, 2026 } dnat to 192.168.3.10
 
 nft list ruleset
 nft list ruleset > /etc/nftables/nftables.nft
@@ -64,19 +64,19 @@ host_key_checking = False
 interpreter_python=auto_silent
 
 cat << EOF > /etc/ansible/hosts
-HQ-SRV ansible_user=user ansible_password=resu ansible_port=2026
-HQ-RTR ansible_user=net_admin ansible_password=P@ssw0rd
-BR-RTR ansible_user=net_admin ansible_password=P@ssw0rd
-HQ-CLI ansible_user=user ansible_password=resu
+HQ-SRV ansible_host=192.168.1.10 ansible_user=user ansible_password=resu ansible_port=2026
+HQ-RTR ansible_host=192.168.1.1 ansible_user=net_admin ansible_password=P@ssw0rd
+BR-RTR ansible_host=192.168.3.1 ansible_user=net_admin ansible_password=P@ssw0rd
+HQ-CLI ansible_host=192.168.2.10 ansible_user=user ansible_password=resu
 EOF
 
-проверить состояние службы SSH на хостах
+проверить состояние и при необходимости запустить службы SSH на хостах
+systemctl start sshd
 
 ansible all -m ping
 
 == 6 задание
 на вр срв
-
 --Docker-- 
 
 apt-get install docker-engine docker-compose-v2 -y
@@ -90,7 +90,7 @@ docker image ls
 
 cat << EOF > docker-compose.yml
 services:
-  datanase:
+  database:
     container_name: db
     image: mariadb:latest
     restart: always
@@ -128,9 +128,12 @@ docker compose up -d
 docker ps
 ss -ltnp4 | grep 8080
 
-переходим на HQ-CLU, заходим по docker.au-team.irpo (если сделан nxinx) и по 192.168.3.10:8080 создаём запись
-docker rm -f $ (docker ps -qa)
-docker compose up -d
+переходим на HQ-CLI, заходим по http://docker.au-team.irpo (если сделан nxinx) и по http://192.168.3.10:8080 создаём запись
+
+нижние так-то нужно ввести, но лучше не рисковать, следующая удаляет контейнер, и ломается, слишком долго запускается
+#docker rm -f $(docker ps -qa)
+#docker compose
+#проверяем что запись на месте (долго очухивается, и пускает на страницу через некоторое время)
 
 == 2 задание 
 хк срв
@@ -144,7 +147,7 @@ set 1 raid on
 print
 select /dev/sdc
 ---
-
+посмотреть какие есть диски можно командой lsblk, и указать нужные в /dev/sdb1 и /dev/sdc1
 mdadm --create /dev/md0 --level=0 --raid-devices=2 /dev/sdb1 /dev/sdc1
 mdadm --detail --scan >> /etc/mdadm.conf
 mkfs.ext4 /dev/md0
@@ -158,21 +161,23 @@ df -T
 хк срв
 
 apt-get install nfs-server nfs-utils -y
+
+(если не делали raid, то перед следующей прописать: mkdir /raid)
 mkdir /raid/nfs
 cp /etc/exports /etc/exports.back
-echo "/raid/nfs 192.168.2.0/27 (rw, no_subtree_check,no_root_squash)" >> /etc/exports
+echo "/raid/nfs 192.168.2.0/27(rw,no_subtree_check,no_root_squash)" >> /etc/exports
 systemctl enable --now nfs-server
-exportfs -vra
+exportfs -vra (необходима в случае повторного редактирования /etc/exports)
 
-хк сли
-
+-- На HQ-CLI --
 mkdir /mnt/nfs
 chmod -R 777 /mnt/nfs
 showmount -e hq-srv
 cp /etc/fstab /etc/fstab.back
-echo "192.168.1.10:/raid/nfs /mnt/nfs nfs rw.soft,_netdev 0 0  " >> /etc/fstab
+echo "192.168.1.10:/raid/nfs /mnt/nfs nfs rw,soft,_netdev 0 0   " >> /etc/fstab
 mount -av
 df -T
+создать файл/каталог в /mnt/nfs на клиенте через графику/командную панель, посмотреть на второй стороне в каталоге командой ls -l /raid/nfs/ и ls /raid/nfs/
 
 == 7 задание (отчет)
 
@@ -194,7 +199,7 @@ mariadb webdb < /mnt/web/dump.sql
 mariadb -e "USE webdb; SHOW TABLES;"
 
 nano /var/www/html/index.php
----
+--- (заменить параметры на указанные)
 $servername = "localhost";
 $username = "web";
 $password = "P@ssw0rd";
@@ -203,9 +208,8 @@ $dbname = "webdb";
 systemctl enable --now httpd2.service
 
 переходим на HQ-CLI в браузере
-web.au-team.irpo и/или 192.168.1.10, аутентификация WEB/P@ssw0rd
+web.au-team.irpo и/или 192.168.1.10, аутентификация WEB/P@ssw0rd (по домену просит данные, по ip нет, вход по домену доступен при настроенном nginx или samba)
 
 == 11 задание (отчет)
 на хк сли
-
 apt-get install yandex-browser-stable -y
